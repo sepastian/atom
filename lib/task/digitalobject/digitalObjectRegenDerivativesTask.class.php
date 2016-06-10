@@ -34,7 +34,8 @@ class digitalObjectRegenDerivativesTask extends arBaseTask
       new sfCommandOption('only-externals', 'o', sfCommandOption::PARAMETER_NONE, 'Only external objects', null),
       new sfCommandOption('json', 'j', sfCommandOption::PARAMETER_OPTIONAL, 'Limit regenerating derivatives to IDs in a JSON file', null),
       new sfCommandOption('skip-to', null, sfCommandOption::PARAMETER_OPTIONAL, 'Skip regenerating derivatives until a certain filename is encountered', null),
-    ));
+      new sfCommandOption('no-overwrite', 'n', sfCommandOption::PARAMETER_NONE, 'Don\'t overwrite existing derivatives (and no confirmation message)', null)
+  ));
 
     $this->namespace = 'digitalobject';
     $this->name = 'regen-derivatives';
@@ -95,8 +96,14 @@ EOF;
       $query .= ' AND do.id IN (' . implode(', ', $ids) . ')';
     }
 
-    // Final confirmation
-    if (!$options['force'])
+    if ($options['no-overwrite'])
+    {
+      $query .= ' LEFT JOIN digital_object child ON do.id = child.parent_id';
+      $query .= ' WHERE do.parent_id IS NULL AND child.id IS NULL';
+    }
+
+    // Final confirmation (skip if no-overwrite)
+    if (!$options['force'] && !$options['no-overwrite'])
     {
       $confirm = array();
 
