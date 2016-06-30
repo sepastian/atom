@@ -102,31 +102,10 @@ EOF;
       $query .= ' WHERE do.parent_id IS NULL AND child.id IS NULL';
     }
 
-    // Final confirmation (skip if no-overwrite)
-    if (!$options['force'] && !$options['no-overwrite'])
+    // Confirm derivative deletion
+    if (!$this->confirm($options))
     {
-      $confirm = array();
-
-      if ($options['slug'])
-      {
-        $confirm[] = 'Continuing will regenerate the dervivatives for ALL descendants of';
-        $confirm[] = '"'.$options['slug'].'"';
-      }
-      else
-      {
-        $confirm[] = 'Continuing will regenerate the dervivatives for ALL digital objects';
-      }
-
-      $confirm[] = 'This will PERMANENTLY DELETE existing derivatives you chose to regenerate';
-      $confirm[] = '';
-      $confirm[] = 'Continue? (y/N)';
-
-      if (!$this->askConfirmation($confirm, 'QUESTION_LARGE', false))
-      {
-        $this->logSection('digital object', 'Bye!');
-
-        return 1;
-      }
+      return 1;
     }
 
     // Do work
@@ -224,5 +203,84 @@ EOF;
     // Destroy out-of-scope objects
     QubitDigitalObject::clearCache();
     QubitInformationObject::clearCache();
+  }
+
+/**
+ * Confirm overwrite of derivatives
+ *
+ * @param  array $options cli options
+ * @return boolean        true to continue
+ */
+  protected function confirm($options)
+  {
+    $confirm = array();
+    $scope = array();
+
+    // No confirmation for --force or --no-overwite options
+    if ($options['force'] || $options['no-overwrite'])
+    {
+      return true;
+    }
+
+    if ($options['only-externals'])
+    {
+      $scope[] = 'external';
+    }
+
+    switch ($options['type'])
+    {
+      case 'thumbnail':
+        $scope[] = 'thumbnails';
+        break;
+
+      case 'reference':
+        $scope[] = 'reference derivatives';
+        break;
+
+      default:to
+        $scope[] = 'derivatives';
+    }
+
+    if ($options['slug'])
+    {
+      $scope[] = sprintf('that are descendants of "%s"', $options['slug']);
+    }
+
+    if ($options['json'])
+    {
+      $scope[] = sprintf('with ids in file "%s"', $options['json']);
+    }
+
+    if ($options['skip-to'])
+    {
+      $scope[] = sprintf('coming after "%s"', $options['skip-to']);
+    }
+
+    // Build confirmation message based on options
+    if (0 == count($scope))
+    {
+      $confirm[] = 'Continuing will regenerate the dervivatives for ALL digital objects';
+    }
+    else
+    {
+      // Wrap confirmation string at 75 chars
+      $str = wordwrap('Continuing will regenerate all '.implode(', ', $scope));
+      $confirm = array_merge($confirm, explode("\n", $str));
+    }
+
+    $confirm[] = '';
+    $confirm[] = 'This will PERMANENTLY DELETE existing derivatives you chose to regenerate';
+    $confirm[] = '';
+    $confirm[] = 'Continue? (y/N)';
+
+    if ($this->askConfirmation($confirm, 'QUESTION_LARGE', false))
+    {
+      return true;
+    }
+
+    // Abort
+    $this->logSection('digital object', 'Bye!');
+
+    return false;
   }
 }
