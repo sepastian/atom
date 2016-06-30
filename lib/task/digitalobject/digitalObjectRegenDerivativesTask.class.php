@@ -64,43 +64,8 @@ EOF;
       QubitSearch::disable();
     }
 
-    // Get all master digital objects
-    $query = 'SELECT do.id
-      FROM digital_object do JOIN information_object io ON do.information_object_id = io.id';
-
-    // Limit to a branch
-    if ($options['slug'])
-    {
-      $q2 = 'SELECT io.id, io.lft, io.rgt
-        FROM information_object io JOIN slug ON io.id = slug.object_id
-        WHERE slug.slug = ?';
-
-      $row = QubitPdo::fetchOne($q2, array($options['slug']));
-
-      if (false === $row)
-      {
-        throw new sfException("Invalid slug");
-      }
-
-      $query .= ' WHERE io.lft >= '.$row->lft.' and io.rgt <= '.$row->rgt;
-    }
-
-    if ($options['only-externals'])
-    {
-      $query .= ' AND do.usage_id = '.QubitTerm::EXTERNAL_URI_ID;
-    }
-
-    if ($options['json'])
-    {
-      $ids = json_decode(file_get_contents($options['json']));
-      $query .= ' AND do.id IN (' . implode(', ', $ids) . ')';
-    }
-
-    if ($options['no-overwrite'])
-    {
-      $query .= ' LEFT JOIN digital_object child ON do.id = child.parent_id';
-      $query .= ' WHERE do.parent_id IS NULL AND child.id IS NULL';
-    }
+    // Build SQL query string
+    $query = $this->buildSqlQueryFromOptions($options);
 
     // Confirm derivative deletion
     if (!$this->confirm($options))
@@ -135,6 +100,9 @@ EOF;
         $do->name, $timer->elapsed()));
 
       // Trap any exceptions when creating derivatives and continue script
+
+      digitalObjectRegenDerivativesTask::regenerateDerivatives($do, $options['type']);
+
       try
       {
         digitalObjectRegenDerivativesTask::regenerateDerivatives($do, $options['type']);
@@ -192,7 +160,7 @@ EOF;
         $usageId = QubitTerm::MASTER_ID;
     }
 
-    $digitalObject->createRepresentations($usageId, $conn);
+    $digitalObject->createRepresentations($usageId);
 
     if ($options['index'])
     {
@@ -205,12 +173,85 @@ EOF;
     QubitInformationObject::clearCache();
   }
 
-/**
- * Confirm overwrite of derivatives
- *
- * @param  array $options cli options
- * @return boolean        true to continue
- */
+  /**
+   * Construct SQL query from task options
+   *
+   * @param  array $options task options
+   * @return string         SQL query
+   */
+  protected function buildSqlQueryFromOptions($options)
+  {
+    $join = array();
+
+    // Get master digital objects
+    $where = array('do.information_object_id IS NOT NULL');
+
+    // Find descendants of "slug"
+    if ($options['slug'])
+    {
+      $q2 = 'SELECT io.id, io.lft, io.rgt
+        FROM information_object io JOIN slug ON io.id = slug.object_id
+        WHERE slug.slug = ?';
+
+      $row = QubitPdo::fetchOne($q2, array($options['slug']));
+
+      if (false === $row)
+      {
+        throw new sfException("Invalid slug");
+      }
+
+      $join[]  = 'LEFT JOIN information_object io
+        ON do.information_object_id = io.id';
+      $where[] = 'io.lft >= '.$row->lft.' and io.rgt <= '.$row->rgt;
+    }
+
+    // Find digital objects with usage type "external"
+    if ($options['only-externals'])
+    {
+      $where[] = 'do.usage_id = '.QubitTerm::EXTERNAL_URI_ID;
+    }
+
+    // Limit to digital object ids in JSON file
+    if ($options['json'])
+    {
+      // Check that file exists
+      if (!file_exists($options['json']) || !is_file($options['json']))
+      {
+        throw new sfException(sprintf('Specified file "%s" doesn\'t exist', $options['json']));
+      }
+
+      $ids = json_decode(file_get_contents($options['json']));
+      $where[] = 'do.id IN (' . implode(', ', $ids) . ')';
+    }
+
+    // Find digital objects with no children (derivatives)
+    if ($options['no-overwrite'])
+    {
+      $join[]  = 'LEFT JOIN digital_object child ON do.id = child.parent_id';
+      $where[] = 'do.parent_id IS NULL AND child.id IS NULL';
+    }
+
+    // Get digital object ids
+    $query = 'SELECT do.id FROM digital_object do';
+
+    // Add any additional joins
+    if (0 < count($join))
+    {
+      $query .= ' '.implode(' ', $join);
+    }
+
+    // Add WHERE condition(s)
+    $query .= ' WHERE '.implode(' AND ', $where);
+
+    return $query;
+  }
+
+  /**
+   * Confirm overwrite of derivatives
+   *
+   * @param  array $options cli options
+   * @return boolean        true to continue
+   */
   protected function confirm($options)
   {
     $confirm = array();
@@ -237,7 +278,7 @@ EOF;
         $scope[] = 'reference derivatives';
         break;
 
-      default:to
+      default:
         $scope[] = 'derivatives';
     }
 
